@@ -256,3 +256,58 @@ You can run:
 - ECS autoscaling (`min=1`, `max=4`) on CPU + memory
 - CloudWatch alarms for CPU, memory, and low running task count
 - private subnets for ECS/RDS/Redis with NAT egress for broker/API access
+
+
+## Auto Deploy: Render (Backend) + Vercel (Frontend)
+
+Automation is configured using GitHub Actions workflows:
+
+- `.github/workflows/render-backend-deploy.yml`
+- `.github/workflows/vercel-frontend-deploy.yml`
+
+### 1) Required GitHub Secrets
+
+Set these in **GitHub -> Settings -> Secrets and variables -> Actions**.
+
+#### Render backend
+
+- `RENDER_DEPLOY_HOOK_URL`
+
+Create this in Render:
+- Open your backend service -> **Settings** -> **Deploy Hook** -> create hook
+- Copy URL and save as `RENDER_DEPLOY_HOOK_URL`
+
+#### Vercel frontend
+
+- `VERCEL_TOKEN`
+- `VERCEL_ORG_ID`
+- `VERCEL_PROJECT_ID`
+
+Get these from Vercel:
+- `VERCEL_TOKEN`: Account settings -> Tokens
+- `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID`: from Vercel project settings or `.vercel/project.json`
+
+### 2) Trigger behavior
+
+- Backend workflow triggers on pushes changing `backend/**` or `render.yaml`
+- Frontend workflow triggers on pushes changing `frontend/**`
+- Both also support manual `workflow_dispatch`
+
+### 3) Branches currently enabled
+
+- `main`
+- `cursor/nexusquant-platform-9f8a`
+
+You can edit workflow `branches` to match your long-term release branch strategy.
+
+### 4) Vercel environment variables
+
+In Vercel project settings, define:
+
+- `VITE_API_BASE_URL`
+- `VITE_TELEMETRY_WS_URL`
+
+Example production values:
+
+- `VITE_API_BASE_URL=https://api.nexusquant.ai`
+- `VITE_TELEMETRY_WS_URL=wss://api.nexusquant.ai/ws/telemetry`
