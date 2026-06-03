@@ -1,0 +1,22 @@
+project_name = "nexusquant"
+environment  = "prod"
+aws_region   = "ap-south-1"
+
+backend_image       = "123456789012.dkr.ecr.ap-south-1.amazonaws.com/nexusquant-backend:latest"
+acm_certificate_arn = "arn:aws:acm:ap-south-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+create_route53_record = true
+route53_zone_id       = "Z1234567890ABC"
+api_domain_name       = "api.nexusquant.ai"
+
+trading_mode                    = "simulator"
+require_live_upstox_connection  = true
+upstox_api_key                  = "replace-me"
+upstox_access_token             = "replace-me"
+
+fargate_cpu    = 1024
+fargate_memory = 2048
+desired_count  = 1
+
+autoscaling_min_capacity = 1
+autoscaling_max_capacity = 4

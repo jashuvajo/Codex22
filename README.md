@@ -169,3 +169,90 @@ New API endpoints:
 
 Model status is streamed in telemetry (`ai_model_ready`, `ai_model_version`, `model_probability`, `heuristic_tqs`).
 
+
+
+## AWS Production Deployment (Recommended)
+
+Target architecture:
+
+- Vercel frontend (`app.nexusquant.ai`)
+- AWS ALB (`api.nexusquant.ai`) with HTTPS + WSS
+- ECS Fargate backend (FastAPI)
+- RDS PostgreSQL (private subnets)
+- ElastiCache Redis (private subnets)
+- Secrets Manager for credentials/tokens
+- CloudWatch logs + alarms + ECS autoscaling
+
+Terraform folder layout:
+
+```text
+infra/aws/
+├── main.tf
+├── variables.tf
+├── outputs.tf
+├── networking.tf
+├── alb.tf
+├── ecs.tf
+├── rds.tf
+├── redis.tf
+├── iam.tf
+├── secrets.tf
+├── cloudwatch.tf
+└── terraform.tfvars.example
+```
+
+### Quick deploy flow
+
+1. Copy and fill variables:
+
+```bash
+cd infra/aws
+cp terraform.tfvars.example terraform.tfvars
+# edit values: backend_image, acm_certificate_arn, Route53, Upstox creds
+```
+
+2. Build and push backend image:
+
+```bash
+docker build --platform linux/amd64 -t nexusquant-backend ./backend
+```
+
+3. Apply Terraform:
+
+```bash
+terraform init
+terraform plan
+terraform apply
+```
+
+4. Point frontend telemetry URL:
+
+```bash
+VITE_API_BASE_URL=https://api.nexusquant.ai
+VITE_TELEMETRY_WS_URL=wss://api.nexusquant.ai/ws/telemetry
+```
+
+### One-command script
+
+You can run:
+
+```bash
+./scripts/deploy_aws.sh ap-south-1 <ACCOUNT_ID> <ACM_CERTIFICATE_ARN>
+```
+
+### Runtime defaults baked into ECS task
+
+- `TRADING_MODE=simulator`
+- `REQUIRE_LIVE_UPSTOX_CONNECTION=true`
+- `UPSTOX_BASE_URL=https://api.upstox.com/v2`
+- `UPSTOX_MARKET_AUTHORIZE_ENDPOINT=/v3/feed/market-data-feed/authorize`
+- `WS_HEARTBEAT_INTERVAL=15`
+- `REDIS_CHANNEL=market_ticks`
+
+### Operational safeguards included
+
+- ALB idle timeout set to `300` for websocket stability
+- ECS target group health check at `/health`
+- ECS autoscaling (`min=1`, `max=4`) on CPU + memory
+- CloudWatch alarms for CPU, memory, and low running task count
+- private subnets for ECS/RDS/Redis with NAT egress for broker/API access
