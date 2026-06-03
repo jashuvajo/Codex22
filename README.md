@@ -311,3 +311,24 @@ Example production values:
 
 - `VITE_API_BASE_URL=https://api.nexusquant.ai`
 - `VITE_TELEMETRY_WS_URL=wss://api.nexusquant.ai/ws/telemetry`
+
+
+### Railway deployment troubleshooting
+
+If Railway build logs show `railpack process exited with an error` at repository root, deploy from Dockerfile mode using `railway.toml`:
+
+- `builder = "DOCKERFILE"`
+- `dockerfilePath = "backend/Dockerfile"`
+
+This repo now includes that configuration at the root.
+
+On Railway, set backend environment variables:
+
+- `UPSTOX_API_KEY`
+- `UPSTOX_ACCESS_TOKEN`
+- `DATABASE_URL` (must be asyncpg format: `postgresql+asyncpg://...`)
+- `REDIS_URL`
+- `TRADING_MODE=simulator`
+- `REQUIRE_LIVE_UPSTOX_CONNECTION=true`
+
+Also ensure Railway provides a dynamic `PORT`; backend now binds using `${PORT:-8000}`.
