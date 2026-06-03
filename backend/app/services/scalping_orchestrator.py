@@ -15,11 +15,15 @@ from app.core.state import RuntimeState
 from app.engines.ai_engine import AIEngine
 from app.engines.analytics_engine import AnalyticsEngine
 from app.engines.execution_router import ExecutionRouter
+from app.engines.feature_engine import FeatureEngine
 from app.engines.heatmap_engine import HeatmapEngine
+from app.engines.model_registry import ModelRegistry
 from app.engines.orderflow_engine import OrderflowEngine
 from app.engines.risk_engine import RiskContext, RiskEngine
 from app.engines.strategy_router import StrategyRouter
 from app.engines.trailing_engine import TrailingEngine
+from app.engines.training_engine import TrainingEngine
+from app.services.market_data_collector import MarketDataCollector
 from app.services.redis_bus import RedisBus
 from app.services.upstox_client import UpstoxClient
 from app.services.ws_manager import WebSocketManager
@@ -30,6 +34,7 @@ signals_total = Counter("nexusquant_signals_total", "Total generated signals")
 orders_total = Counter("nexusquant_orders_total", "Total orders attempted")
 tqs_gauge = Gauge("nexusquant_tqs", "Current trade quality score")
 latency_hist = Histogram("nexusquant_execution_latency_ms", "Execution latency in ms")
+model_probability_gauge = Gauge("nexusquant_model_probability", "Model probability for scalp move")
 
 
 class ScalpingOrchestrator:
@@ -40,24 +45,34 @@ class ScalpingOrchestrator:
         upstox: UpstoxClient,
         ws_manager: WebSocketManager,
         redis_bus: RedisBus,
+        feature_engine: FeatureEngine,
+        model_registry: ModelRegistry,
+        training_engine: TrainingEngine,
+        market_data_collector: MarketDataCollector,
     ) -> None:
         self.settings = settings
         self.state = state
         self.upstox = upstox
         self.ws_manager = ws_manager
         self.redis_bus = redis_bus
+        self.model_registry = model_registry
+        self.training_engine = training_engine
+        self.market_data_collector = market_data_collector
 
         self.orderflow = OrderflowEngine()
         self.heatmap = HeatmapEngine()
-        self.ai = AIEngine()
+        self.ai = AIEngine(settings, feature_engine, model_registry)
         self.risk = RiskEngine(settings)
         self.strategy = StrategyRouter(settings)
         self.execution = ExecutionRouter(settings, upstox)
         self.trailing = TrailingEngine()
         self.analytics = AnalyticsEngine()
+
         self._task: asyncio.Task | None = None
+        self._train_task: asyncio.Task | None = None
         self._running = False
         self._last_broker_refresh = 0.0
+        self._last_auto_train = 0.0
 
     async def start(self) -> None:
         if self._running:
@@ -71,12 +86,12 @@ class ScalpingOrchestrator:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
+        if self._train_task:
+            self._train_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._train_task
 
     async def _run_loop(self) -> None:
-        """
-        Executes every second:
-        feed -> orderflow -> heatmap -> AI score -> risk -> strategy -> execution -> trailing -> analytics.
-        """
         while self._running:
             stream = self._select_stream()
             async for tick in stream:
@@ -153,6 +168,26 @@ class ScalpingOrchestrator:
             gross = max(self.state.used_margin, 0.0)
             self.state.exposure_pct = min(gross / self.settings.daily_capital * 100, 100.0)
 
+    async def _auto_train_if_due(self) -> None:
+        if not self.settings.ai_auto_train_enabled:
+            return
+        now = time.time()
+        if (now - self._last_auto_train) < self.settings.ai_auto_retrain_seconds:
+            return
+        if self._train_task and not self._train_task.done():
+            return
+
+        self._last_auto_train = now
+
+        async def _train() -> None:
+            result = await self.training_engine.train_from_feature_store()
+            if result.get("trained"):
+                logger.info("AI model retrained: %s", result)
+            else:
+                logger.info("AI retrain skipped: %s", result)
+
+        self._train_task = asyncio.create_task(_train(), name="nexusquant-ai-train")
+
     async def _process_tick(self, tick: MarketTick) -> None:
         started = time.perf_counter()
         async with self.state.lock:
@@ -169,8 +204,18 @@ class ScalpingOrchestrator:
         orderflow_snapshot = self.orderflow.snapshot()
         heatmap_snapshot = self.heatmap.snapshot()
 
-        tqs, tqs_factors = self.ai.compute_tqs(tick, orderflow_snapshot, heatmap_snapshot)
+        tqs, tqs_factors, model_probability, heuristic_tqs, _feature_payload = self.ai.compute_tqs(
+            tick,
+            orderflow_snapshot,
+            heatmap_snapshot,
+        )
         tqs_gauge.set(tqs)
+        if model_probability is not None:
+            model_probability_gauge.set(model_probability)
+
+        # Persist feature rows continuously for subsequent supervised training.
+        await self.market_data_collector.persist(tick, orderflow_snapshot, heatmap_snapshot, heuristic_tqs)
+        await self._auto_train_if_due()
 
         stale_feed = self.state.is_feed_stale(self.settings.stale_feed_seconds)
         risk_ctx = RiskContext(
@@ -193,7 +238,11 @@ class ScalpingOrchestrator:
         else:
             self.state.broker.reason = "Healthy"
 
-        signal = self.strategy.route(tick, tqs, orderflow_snapshot, heatmap_snapshot) if decision.allowed else None
+        signal = (
+            self.strategy.route(tick, tqs, orderflow_snapshot, heatmap_snapshot, model_probability)
+            if decision.allowed
+            else None
+        )
 
         if signal:
             signals_total.inc()
@@ -222,6 +271,8 @@ class ScalpingOrchestrator:
                         "factors": tqs_factors,
                         "execution": result,
                         "rationale": signal.rationale,
+                        "model_probability": model_probability,
+                        "heuristic_tqs": heuristic_tqs,
                     },
                 )
 
@@ -241,6 +292,10 @@ class ScalpingOrchestrator:
             mode=self.settings.trading_mode,
             stale_feed=stale_feed,
             tqs=tqs,
+            heuristic_tqs=heuristic_tqs,
+            model_probability=model_probability,
+            ai_model_ready=self.model_registry.ready,
+            ai_model_version=self.model_registry.model_version,
             signal=signal,
             safe_mode_reason=self.state.broker.reason,
             heatmap=heatmap_snapshot,

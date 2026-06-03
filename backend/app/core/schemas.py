@@ -97,6 +97,10 @@ class TelemetrySnapshot(BaseModel):
     mode: str = "simulator"
     stale_feed: bool = True
     tqs: float = 0.0
+    heuristic_tqs: float = 0.0
+    model_probability: float | None = None
+    ai_model_ready: bool = False
+    ai_model_version: str | None = None
     signal: TradeSignal | None = None
     safe_mode_reason: str = ""
     heatmap: HeatmapSnapshot = Field(default_factory=HeatmapSnapshot)

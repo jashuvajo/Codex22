@@ -1,0 +1,98 @@
+name: aws-deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Apply Terraform changes"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: nexusquant-backend
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      image_uri: ${{ steps.meta.outputs.image_uri }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push backend image
+        id: meta
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker build --platform linux/amd64 -t "$IMAGE_URI" ./backend
+          docker push "$IMAGE_URI"
+          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+
+  terraform:
+    needs: [build-and-push]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        working-directory: infra/aws
+        run: terraform init
+
+      - name: Terraform plan
+        working-directory: infra/aws
+        env:
+          TF_VAR_backend_image: ${{ needs.build-and-push.outputs.image_uri }}
+          TF_VAR_acm_certificate_arn: ${{ secrets.ACM_CERTIFICATE_ARN }}
+          TF_VAR_route53_zone_id: ${{ secrets.ROUTE53_ZONE_ID }}
+          TF_VAR_api_domain_name: api.nexusquant.ai
+          TF_VAR_create_route53_record: "true"
+          TF_VAR_upstox_api_key: ${{ secrets.UPSTOX_API_KEY }}
+          TF_VAR_upstox_access_token: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
+        run: terraform plan -out tfplan
+
+      - name: Terraform apply
+        if: ${{ github.event.inputs.apply == 'true' }}
+        working-directory: infra/aws
+        env:
+          TF_VAR_backend_image: ${{ needs.build-and-push.outputs.image_uri }}
+          TF_VAR_acm_certificate_arn: ${{ secrets.ACM_CERTIFICATE_ARN }}
+          TF_VAR_route53_zone_id: ${{ secrets.ROUTE53_ZONE_ID }}
+          TF_VAR_api_domain_name: api.nexusquant.ai
+          TF_VAR_create_route53_record: "true"
+          TF_VAR_upstox_api_key: ${{ secrets.UPSTOX_API_KEY }}
+          TF_VAR_upstox_access_token: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
+        run: terraform apply -auto-approve tfplan

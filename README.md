@@ -148,3 +148,187 @@ docker compose up --build
 - Never hardcode broker secrets.
 - Use environment variables and secret managers only.
 - Keep `REQUIRE_LIVE_UPSTOX_CONNECTION=true` in production to enforce connectivity-first behavior.
+
+
+## Real-time Upstox Data Collection & AI Training
+
+Yes, real-time data collection is supported. NexusQuant now persists every analyzed market snapshot into PostgreSQL (`market_feature_snapshots`) while feed is live.
+
+Training flow:
+
+1. Collect tick/orderflow/heatmap features each second.
+2. Label samples by checking whether premium expands by `AI_TARGET_POINTS` within `AI_LABEL_LOOKAHEAD_SECONDS`.
+3. Train supervised model (RandomForest) from feature store.
+4. Save and load model via local registry artifact path (`AI_MODEL_PATH`).
+5. Fuse model probability with heuristic TQS for higher quality scalp decisions.
+
+New API endpoints:
+
+- `GET /api/v1/ai/status`
+- `POST /api/v1/ai/train`
+
+Model status is streamed in telemetry (`ai_model_ready`, `ai_model_version`, `model_probability`, `heuristic_tqs`).
+
+
+
+## AWS Production Deployment (Recommended)
+
+Target architecture:
+
+- Vercel frontend (`app.nexusquant.ai`)
+- AWS ALB (`api.nexusquant.ai`) with HTTPS + WSS
+- ECS Fargate backend (FastAPI)
+- RDS PostgreSQL (private subnets)
+- ElastiCache Redis (private subnets)
+- Secrets Manager for credentials/tokens
+- CloudWatch logs + alarms + ECS autoscaling
+
+Terraform folder layout:
+
+```text
+infra/aws/
+├── main.tf
+├── variables.tf
+├── outputs.tf
+├── networking.tf
+├── alb.tf
+├── ecs.tf
+├── rds.tf
+├── redis.tf
+├── iam.tf
+├── secrets.tf
+├── cloudwatch.tf
+└── terraform.tfvars.example
+```
+
+### Quick deploy flow
+
+1. Copy and fill variables:
+
+```bash
+cd infra/aws
+cp terraform.tfvars.example terraform.tfvars
+# edit values: backend_image, acm_certificate_arn, Route53, Upstox creds
+```
+
+2. Build and push backend image:
+
+```bash
+docker build --platform linux/amd64 -t nexusquant-backend ./backend
+```
+
+3. Apply Terraform:
+
+```bash
+terraform init
+terraform plan
+terraform apply
+```
+
+4. Point frontend telemetry URL:
+
+```bash
+VITE_API_BASE_URL=https://api.nexusquant.ai
+VITE_TELEMETRY_WS_URL=wss://api.nexusquant.ai/ws/telemetry
+```
+
+### One-command script
+
+You can run:
+
+```bash
+./scripts/deploy_aws.sh ap-south-1 <ACCOUNT_ID> <ACM_CERTIFICATE_ARN>
+```
+
+### Runtime defaults baked into ECS task
+
+- `TRADING_MODE=simulator`
+- `REQUIRE_LIVE_UPSTOX_CONNECTION=true`
+- `UPSTOX_BASE_URL=https://api.upstox.com/v2`
+- `UPSTOX_MARKET_AUTHORIZE_ENDPOINT=/v3/feed/market-data-feed/authorize`
+- `WS_HEARTBEAT_INTERVAL=15`
+- `REDIS_CHANNEL=market_ticks`
+
+### Operational safeguards included
+
+- ALB idle timeout set to `300` for websocket stability
+- ECS target group health check at `/health`
+- ECS autoscaling (`min=1`, `max=4`) on CPU + memory
+- CloudWatch alarms for CPU, memory, and low running task count
+- private subnets for ECS/RDS/Redis with NAT egress for broker/API access
+
+
+## Auto Deploy: Render (Backend) + Vercel (Frontend)
+
+Automation is configured using GitHub Actions workflows:
+
+- `.github/workflows/render-backend-deploy.yml`
+- `.github/workflows/vercel-frontend-deploy.yml`
+
+### 1) Required GitHub Secrets
+
+Set these in **GitHub -> Settings -> Secrets and variables -> Actions**.
+
+#### Render backend
+
+- `RENDER_DEPLOY_HOOK_URL`
+
+Create this in Render:
+- Open your backend service -> **Settings** -> **Deploy Hook** -> create hook
+- Copy URL and save as `RENDER_DEPLOY_HOOK_URL`
+
+#### Vercel frontend
+
+- `VERCEL_TOKEN`
+- `VERCEL_ORG_ID`
+- `VERCEL_PROJECT_ID`
+
+Get these from Vercel:
+- `VERCEL_TOKEN`: Account settings -> Tokens
+- `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID`: from Vercel project settings or `.vercel/project.json`
+
+### 2) Trigger behavior
+
+- Backend workflow triggers on pushes changing `backend/**` or `render.yaml`
+- Frontend workflow triggers on pushes changing `frontend/**`
+- Both also support manual `workflow_dispatch`
+
+### 3) Branches currently enabled
+
+- `main`
+- `cursor/nexusquant-platform-9f8a`
+
+You can edit workflow `branches` to match your long-term release branch strategy.
+
+### 4) Vercel environment variables
+
+In Vercel project settings, define:
+
+- `VITE_API_BASE_URL`
+- `VITE_TELEMETRY_WS_URL`
+
+Example production values:
+
+- `VITE_API_BASE_URL=https://api.nexusquant.ai`
+- `VITE_TELEMETRY_WS_URL=wss://api.nexusquant.ai/ws/telemetry`
+
+
+### Railway deployment troubleshooting
+
+If Railway build logs show `railpack process exited with an error` at repository root, deploy from Dockerfile mode using `railway.toml`:
+
+- `builder = "DOCKERFILE"`
+- `dockerfilePath = "backend/Dockerfile"`
+
+This repo now includes that configuration at the root.
+
+On Railway, set backend environment variables:
+
+- `UPSTOX_API_KEY`
+- `UPSTOX_ACCESS_TOKEN`
+- `DATABASE_URL` (must be asyncpg format: `postgresql+asyncpg://...`)
+- `REDIS_URL`
+- `TRADING_MODE=simulator`
+- `REQUIRE_LIVE_UPSTOX_CONNECTION=true`
+
+Also ensure Railway provides a dynamic `PORT`; backend now binds using `${PORT:-8000}`.

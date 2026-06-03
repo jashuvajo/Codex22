@@ -56,6 +56,10 @@ export type TelemetrySnapshot = {
   mode: "simulator" | "paper" | "live";
   stale_feed: boolean;
   tqs: number;
+  heuristic_tqs: number;
+  model_probability: number | null;
+  ai_model_ready: boolean;
+  ai_model_version: string | null;
   signal: TradeSignal | null;
   safe_mode_reason: string;
   heatmap: HeatmapSnapshot;

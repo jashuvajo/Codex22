@@ -42,6 +42,11 @@ class UpstoxClient:
         return {
             "Authorization": f"Bearer {self.settings.upstox_access_token}",
             "Accept": "application/json",
+            "Api-Version": "2.0",
+            "x-api-key": self.settings.upstox_api_key,
+            # Cloudflare may block non-browser signatures; keep a stable browser UA.
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
         }
 
     async def connect(self) -> bool:
@@ -62,10 +67,18 @@ class UpstoxClient:
             logger.exception("Upstox REST connect failed: %s", exc)
             return False
 
+    def _resolve_endpoint(self, endpoint: str) -> str:
+        if endpoint.startswith("http://") or endpoint.startswith("https://"):
+            return endpoint
+        base = self.settings.upstox_base_url.rstrip("/")
+        if endpoint.startswith("/v3/") and base.endswith("/v2"):
+            base = base[:-3]
+        return f"{base}{endpoint}"
+
     async def _authorize_market_feed(self) -> str:
         if not self._http:
             raise RuntimeError("HTTP client is not initialized")
-        endpoint = f"{self.settings.upstox_base_url}{self.settings.upstox_market_authorize_endpoint}"
+        endpoint = self._resolve_endpoint(self.settings.upstox_market_authorize_endpoint)
         response = await self._http.get(endpoint, headers=self._headers())
         response.raise_for_status()
         data = response.json()
