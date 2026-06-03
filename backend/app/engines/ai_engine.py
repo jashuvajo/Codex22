@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+from app.core.config import Settings
 from app.core.schemas import HeatmapSnapshot, MarketTick, OrderFlowSnapshot
+from app.engines.feature_engine import FeatureEngine
+from app.engines.model_registry import ModelRegistry
 
 
 class AIEngine:
+    def __init__(self, settings: Settings, feature_engine: FeatureEngine, model_registry: ModelRegistry) -> None:
+        self.settings = settings
+        self.feature_engine = feature_engine
+        self.model_registry = model_registry
+
     def compute_tqs(
         self,
         tick: MarketTick,
         orderflow: OrderFlowSnapshot,
         heatmap: HeatmapSnapshot,
-    ) -> tuple[float, dict[str, float]]:
+    ) -> tuple[float, dict[str, float], float | None, float, dict[str, float]]:
         spread_quality = max(0.0, 1.0 - max(tick.ask - tick.bid, 0.01) / max(tick.ltp * 0.002, 0.01))
         volume_expansion = min(tick.volume / 1_000_000.0, 1.0)
         momentum_strength = min(max(orderflow.breakout_acceleration / 5.0, 0.0), 1.0)
@@ -28,7 +36,7 @@ class AIEngine:
             "option_chain_bias": option_chain_bias,
         }
 
-        weighted_score = (
+        heuristic_score = (
             factors["momentum_strength"] * 0.2
             + factors["delta_spike"] * 0.15
             + factors["spread_quality"] * 0.15
@@ -37,4 +45,16 @@ class AIEngine:
             + factors["liquidity_confirmation"] * 0.15
             + factors["option_chain_bias"] * 0.15
         )
-        return round(weighted_score * 100, 2), factors
+        heuristic_tqs = round(heuristic_score * 100, 2)
+
+        feature_payload = self.feature_engine.build_features(tick, orderflow, heatmap, heuristic_tqs)
+        model_prob = self.model_registry.predict_probability(feature_payload)
+
+        if model_prob is None:
+            final_tqs = heuristic_tqs
+        else:
+            model_score = max(0.0, min(model_prob * 100.0, 100.0))
+            weight = max(0.0, min(self.settings.ai_probability_weight, 0.9))
+            final_tqs = round((1 - weight) * heuristic_tqs + (weight * model_score), 2)
+
+        return final_tqs, factors, model_prob, heuristic_tqs, feature_payload

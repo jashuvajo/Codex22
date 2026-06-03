@@ -3,8 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.core.container import AppContainer
 from app.api.deps import get_container
+from app.core.container import AppContainer
 
 router = APIRouter(prefix="/api/v1", tags=["nexusquant"])
 
@@ -38,6 +38,7 @@ async def get_state(container: AppContainer = Depends(get_container)) -> dict:
         "unrealized_pnl": state.unrealized_pnl,
         "open_orders": state.open_orders,
         "active_positions": [p.model_dump() for p in state.active_positions],
+        "ai_model": container.model_registry.status(),
     }
 
 
@@ -67,3 +68,16 @@ async def manual_trade(
         "qty": payload.qty,
         "mode": container.settings.trading_mode,
     }
+
+
+@router.get("/ai/status")
+async def ai_status(container: AppContainer = Depends(get_container)) -> dict:
+    return container.model_registry.status()
+
+
+@router.post("/ai/train")
+async def ai_train(container: AppContainer = Depends(get_container)) -> dict:
+    result = await container.training_engine.train_from_feature_store()
+    if not result.get("trained"):
+        return {"status": "skipped", **result}
+    return {"status": "trained", **result}

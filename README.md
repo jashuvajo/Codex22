@@ -148,3 +148,24 @@ docker compose up --build
 - Never hardcode broker secrets.
 - Use environment variables and secret managers only.
 - Keep `REQUIRE_LIVE_UPSTOX_CONNECTION=true` in production to enforce connectivity-first behavior.
+
+
+## Real-time Upstox Data Collection & AI Training
+
+Yes, real-time data collection is supported. NexusQuant now persists every analyzed market snapshot into PostgreSQL (`market_feature_snapshots`) while feed is live.
+
+Training flow:
+
+1. Collect tick/orderflow/heatmap features each second.
+2. Label samples by checking whether premium expands by `AI_TARGET_POINTS` within `AI_LABEL_LOOKAHEAD_SECONDS`.
+3. Train supervised model (RandomForest) from feature store.
+4. Save and load model via local registry artifact path (`AI_MODEL_PATH`).
+5. Fuse model probability with heuristic TQS for higher quality scalp decisions.
+
+New API endpoints:
+
+- `GET /api/v1/ai/status`
+- `POST /api/v1/ai/train`
+
+Model status is streamed in telemetry (`ai_model_ready`, `ai_model_version`, `model_probability`, `heuristic_tqs`).
+

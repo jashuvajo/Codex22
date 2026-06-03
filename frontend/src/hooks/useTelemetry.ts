@@ -21,6 +21,10 @@ const initialState: TelemetrySnapshot = {
   mode: "simulator",
   stale_feed: true,
   tqs: 0,
+  heuristic_tqs: 0,
+  model_probability: null,
+  ai_model_ready: false,
+  ai_model_version: null,
   signal: null,
   safe_mode_reason: "SAFE MODE",
   heatmap: {

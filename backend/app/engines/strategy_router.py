@@ -14,6 +14,7 @@ class StrategyRouter:
         tqs: float,
         orderflow: OrderFlowSnapshot,
         heatmap: HeatmapSnapshot,
+        model_probability: float | None = None,
     ) -> TradeSignal | None:
         if tqs < self.settings.ai_threshold:
             return None
@@ -35,15 +36,20 @@ class StrategyRouter:
         if spread_ok:
             reasons.append("Spread quality acceptable")
 
+        if model_probability is not None:
+            if model_probability < self.settings.ai_min_probability:
+                return None
+            reasons.append(f"Model confirmation: {model_probability * 100:.1f}%")
+
         if bullish_momentum and breakout_continuation and liquidity_confirmed and spread_ok:
-            confidence = min(0.5 + tqs / 200, 0.98)
+            confidence = min(0.5 + tqs / 200, 0.99)
             return TradeSignal(
                 symbol=tick.symbol,
                 direction="BUY",
                 score=tqs,
                 rationale=reasons,
                 confidence=confidence,
-                target_points=5.0,
+                target_points=self.settings.ai_target_points,
                 stop_points=2.8,
             )
         return None

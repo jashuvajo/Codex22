@@ -29,7 +29,14 @@ export default function App() {
 
       <section className="grid grid-cols-1 gap-3 xl:grid-cols-4">
         <ExecutionHUD data={snapshot} wsConnected={connected} />
-        <AIMatrix tqs={snapshot.tqs} signal={snapshot.signal} />
+        <AIMatrix
+          tqs={snapshot.tqs}
+          heuristicTqs={snapshot.heuristic_tqs}
+          modelProbability={snapshot.model_probability}
+          modelReady={snapshot.ai_model_ready}
+          modelVersion={snapshot.ai_model_version}
+          signal={snapshot.signal}
+        />
         <OrderflowAnalytics flow={snapshot.orderflow} />
         <HeatmapTerminal heatmap={snapshot.heatmap} />
         <UpstoxPortfolio data={snapshot} />

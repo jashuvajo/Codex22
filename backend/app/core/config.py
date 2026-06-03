@@ -54,6 +54,17 @@ class Settings(BaseSettings):
     cooldown_after_losses: int = Field(default=3, alias="COOLDOWN_AFTER_LOSSES")
     require_live_upstox_connection: bool = Field(default=True, alias="REQUIRE_LIVE_UPSTOX_CONNECTION")
 
+    # ML / Data collection
+    ai_model_path: str = Field(default="./artifacts/ai/scalp_model.joblib", alias="AI_MODEL_PATH")
+    ai_training_min_samples: int = Field(default=1200, alias="AI_TRAINING_MIN_SAMPLES")
+    ai_training_rows: int = Field(default=60000, alias="AI_TRAINING_ROWS")
+    ai_label_lookahead_seconds: int = Field(default=18, alias="AI_LABEL_LOOKAHEAD_SECONDS")
+    ai_target_points: float = Field(default=5.0, alias="AI_TARGET_POINTS")
+    ai_probability_weight: float = Field(default=0.35, alias="AI_PROBABILITY_WEIGHT")
+    ai_min_probability: float = Field(default=0.58, alias="AI_MIN_PROBABILITY")
+    ai_auto_train_enabled: bool = Field(default=True, alias="AI_AUTO_TRAIN_ENABLED")
+    ai_auto_retrain_seconds: int = Field(default=900, alias="AI_AUTO_RETRAIN_SECONDS")
+
     # Monitoring
     prometheus_enabled: bool = Field(default=True, alias="PROMETHEUS_ENABLED")
 
