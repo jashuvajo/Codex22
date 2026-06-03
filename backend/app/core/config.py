@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     upstox_access_token: str = Field(default="", alias="UPSTOX_ACCESS_TOKEN")
     upstox_base_url: str = Field(default="https://api.upstox.com/v2", alias="UPSTOX_BASE_URL")
     upstox_market_authorize_endpoint: str = Field(
-        default="/feed/market-data-feed/authorize", alias="UPSTOX_MARKET_AUTHORIZE_ENDPOINT"
+        default="/v3/feed/market-data-feed/authorize", alias="UPSTOX_MARKET_AUTHORIZE_ENDPOINT"
     )
     upstox_profile_endpoint: str = Field(default="/user/profile", alias="UPSTOX_PROFILE_ENDPOINT")
 
